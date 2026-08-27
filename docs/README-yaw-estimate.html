@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yaw Estimation: Mathematical Overview</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #555;
+      --border: #ddd;
+      --code-bg: #f0f0f0;
+      --accent: #2563eb;
+      --table-stripe: #f5f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      line-height: 1.7;
+      color: var(--fg);
+      background: var(--bg);
+      margin: 0;
+      padding: 2rem 1rem 4rem;
+    }
+    main {
+      max-width: 52rem;
+      margin: 0 auto;
+      background: #fff;
+      padding: 2.5rem 3rem;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    h1 { font-size: 1.85rem; border-bottom: 2px solid var(--border); padding-bottom: .5rem; }
+    h2 { font-size: 1.35rem; margin-top: 2.2rem; color: #111; }
+    h3 { font-size: 1.1rem; margin-top: 1.6rem; color: #222; }
+    p, li { font-size: 1rem; }
+    .lang-switch { margin-bottom: 1.5rem; font-size: .95rem; }
+    .lang-switch a { color: var(--accent); text-decoration: none; }
+    .lang-switch a:hover { text-decoration: underline; }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: .88em;
+      background: var(--code-bg);
+      padding: .15em .4em;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0 1.5rem;
+      font-size: .95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: .55rem .75rem;
+      text-align: left;
+    }
+    th { background: var(--table-stripe); font-weight: 600; }
+    tr:nth-child(even) td { background: #fcfcfc; }
+    .math-block {
+      overflow-x: auto;
+      margin: 1.2rem 0;
+      padding: .5rem 0;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    ul, ol { padding-left: 1.4rem; }
+    li { margin: .35rem 0; }
+    .mermaid { margin: 1.5rem 0; text-align: center; }
+    .summary-box {
+      background: #f0f4ff;
+      border-left: 4px solid var(--accent);
+      padding: 1rem 1.2rem;
+      margin: 1.5rem 0;
+      border-radius: 0 6px 6px 0;
+    }
+    .note { color: var(--muted); font-size: .92rem; }
+  </style>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']],
+        processEscapes: true
+      },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+</head>
+<body>
+<main>
+  <p class="lang-switch">
+    <a href="README-yaw-estimate.html">English</a>
+    <a href="README-yaw-estimate.zh.html">中文版</a>
+    <a href="README-yaw-estimate.ja.html">日本語版</a>
+  </p>
+
+  <h1>Yaw Estimation: Mathematical Overview</h1>
+
+  <p>This document explains how <code>scripts/yaw_estimate.py</code> and
+  <code>scripts/pose_math.py</code> derive, from pure geometry,
+  <strong>how many degrees the wrist must rotate about world Z to grasp an object
+  in front of the robot</strong>.</p>
+
+  <h3>Related code</h3>
+  <table>
+    <thead><tr><th>Module</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/yaw_estimate.py</code></td><td>Top-face contour, min-area rectangle, gripper axis from point cloud</td></tr>
+      <tr><td><code>scripts/pose_math.py</code></td><td>Fold angle to minimum rotation; compose downward grasp orientation</td></tr>
+      <tr><td><code>scripts/capture_d455.py</code></td><td>Calls <code>region_yaw_estimate()</code>; writes results to <code>result.json</code></td></tr>
+      <tr><td><code>scripts/demo_api.py</code></td><td>Reads <code>grip_yaw_deg</code>; <code>wrap_to_symmetry</code> → <code>quat_down_with_yaw</code> → IK</td></tr>
+    </tbody>
+  </table>
+  <p class="note">This page documents the public grasp-axis geometry used by the demo.</p>
+
+  <hr>
+
+  <h2>1. What problem are we solving?</h2>
+  <p>A parallel-jaw gripper closes along a <strong>linear axis</strong>. To grasp reliably we need:</p>
+  <ol>
+    <li>The object's <strong>horizontal projection</strong> on the table;</li>
+    <li>The <strong>direction along which the fingers should close</strong> — for non-circular objects, usually the <strong>short side</strong> of the contour;</li>
+    <li>The wrist <strong>yaw about world Z</strong> that aligns that axis with the gripper.</li>
+  </ol>
+  <p><code>yaw_estimate.py</code> handles (1)(2); <code>pose_math.py</code> handles (3).</p>
+  <p><strong>Field to use</strong>: always read <code>grip_yaw_deg</code> for control and acceptance — not
+  <code>yaw_deg_estimated</code>. The latter is mod 90° for backward compatibility only and
+  loses the long-side vs short-side distinction for non-square objects.</p>
+
+  <hr>
+
+  <h2>2. From 3D point cloud to 2D contour</h2>
+
+  <h3>2.1 Table-plane filtering</h3>
+  <p>The table is a plane:</p>
+  <div class="math-block">$$\mathbf{n} \cdot \mathbf{p} = d$$</div>
+  <p>where $\mathbf{n}$ is the normal (<code>plane["normal"]</code>) and $d$ is <code>plane["offset_m"]</code>.
+  Signed height for each point $\mathbf{p}_i$:</p>
+  <div class="math-block">$$h_i = \mathbf{n} \cdot \mathbf{p}_i - d$$</div>
+  <p>Keep points near the object top height:</p>
+  <div class="math-block">$$|h_i - h_{\text{top}}| \le \text{band}$$</div>
+  <p>(<code>height_above_plane_m</code> is $h_{\text{top}}$; default <code>band_m = 0.005</code>.)</p>
+  <p>Take world $(x, y)$ to form 2D top-face points $P = \{p_i \in \mathbb{R}^2\}$.</p>
+  <p><strong>Geometric meaning</strong>: collapse the 3D object to a bird's-eye contour.</p>
+
+  <h3>2.2 Convex hull</h3>
+  <p>Noisy points are unstable for direct fitting. <code>convex_hull_2d()</code> uses the
+  <strong>monotone chain</strong> algorithm to build hull $H$: the smallest convex polygon containing all points.</p>
+  <p>Turn orientation of three points $o, a, b$ uses the 2D cross product (twice the signed area):</p>
+  <div class="math-block">$$\text{cross}(o,a,b) = (a_x - o_x)(b_y - o_y) - (a_y - o_y)(b_x - o_x)$$</div>
+  <ul>
+    <li>$\text{cross} &gt; 0$: left turn (CCW), keep;</li>
+    <li>$\text{cross} \le 0$: right turn or collinear, pop middle point.</li>
+  </ul>
+  <p>The hull drops interior noise and keeps the <strong>outer boundary</strong>.</p>
+
+  <hr>
+
+  <h2>3. Core: minimum-area bounding rectangle (rotating calipers)</h2>
+
+  <h3>3.1 Why not PCA?</h3>
+  <p>A square's covariance matrix is <strong>isotropic</strong>; the principal axis direction is
+  <strong>noise</strong>, not object orientation. We use the <strong>minimum-area bounding rectangle</strong> (MABR),
+  implemented by <code>rotating_calipers_min_rect()</code>.</p>
+
+  <h3>3.2 Key theorem</h3>
+  <p>For a convex polygon $H$, the minimum-area enclosing rectangle has <strong>at least one
+  side collinear with some hull edge</strong>.</p>
+  <p class="note">(Intuition: if no side touches the hull, rotate toward the nearest hull edge without increasing area.)</p>
+  <p>So we need not search a continuous angle space — try each hull edge once (<strong>rotating calipers</strong>).</p>
+
+  <h3>3.3 Per-edge computation</h3>
+  <p>For hull edge $i$, edge vector $\mathbf{e} = p_{i+1} - p_i$, direction angle:</p>
+  <div class="math-block">$$\theta = \operatorname{atan2}(e_y, e_x)$$</div>
+  <p>Rotate all hull vertices by $R(-\theta)$ so this edge aligns with the x-axis:</p>
+  <div class="math-block">$$R(-\theta) = \begin{bmatrix} \cos\theta & \sin\theta \\ -\sin\theta & \cos\theta \end{bmatrix}$$</div>
+  <div class="math-block">$$\tilde{p}_k = R(-\theta)\, p_k$$</div>
+  <p>Compute the <strong>axis-aligned bounding box</strong> (AABB) in the rotated frame:</p>
+  <div class="math-block">$$\text{span}_x = \max_k \tilde{p}_{k,x} - \min_k \tilde{p}_{k,x}, \quad \text{span}_y = \max_k \tilde{p}_{k,y} - \min_k \tilde{p}_{k,y}$$</div>
+  <div class="math-block">$$A(\theta) = \text{span}_x \cdot \text{span}_y$$</div>
+  <p>Pick $\theta^*$ that minimizes $A(\theta)$. Returns:</p>
+  <ul>
+    <li><code>angle_rad</code> = $\theta^*$</li>
+    <li><code>side_a_m</code>: length along $\theta^*$</li>
+    <li><code>side_b_m</code>: length perpendicular to $\theta^*$</li>
+  </ul>
+
+  <hr>
+
+  <h2>4. From rectangle to gripper yaw</h2>
+  <p>A parallel-jaw gripper closes along the <strong>short side</strong>:</p>
+  <ul>
+    <li>Opening width = short side → <code>grip_width_mm</code></li>
+    <li>Object length = long side → <code>object_length_mm</code></li>
+  </ul>
+  <div class="math-block">$$\text{if } \text{side}_a \le \text{side}_b: \quad \phi_{\text{grip}} = \theta^*, \quad w = \text{side}_a, \quad L = \text{side}_b$$</div>
+  <div class="math-block">$$\text{else}: \quad \phi_{\text{grip}} = \theta^* + \frac{\pi}{2}, \quad w = \text{side}_b, \quad L = \text{side}_a$$</div>
+  <p>Output angle (axis has no direction, mod 180°):</p>
+  <div class="math-block">$$\text{grip\_yaw\_deg} = \deg(\phi_{\text{grip}}) \bmod 180^\circ$$</div>
+
+  <h3>Why mod 180° and not mod 90°?</h3>
+  <p>Legacy field <code>yaw_deg_estimated = deg(θ*) mod 90°</code> treats long and short sides as interchangeable.
+  For an <strong>80 mm × 30 mm</strong> rectangle, 10° and 100° map to the same mod-90 value,
+  but the gripper axis differs by 90° (short vs long side). Since G009, <code>grip_yaw_deg</code> explicitly keeps the short-side direction.</p>
+
+  <hr>
+
+  <h2>5. Shape classification and symmetry</h2>
+  <p>One geometric axis may have several equivalent orientations. Classification sets the period $T$ for <code>wrap_to_symmetry()</code>.</p>
+
+  <h3>5.1 Fill ratio</h3>
+  <p>Shoelace formula (<code>_polygon_area()</code>) for hull area $A_H$; rectangle area $A_R = \text{side}_a \cdot \text{side}_b$:</p>
+  <div class="math-block">$$\text{fill\_ratio} = \frac{A_H}{A_R}$$</div>
+  <table>
+    <thead><tr><th>Shape</th><th>Theoretical fill_ratio</th></tr></thead>
+    <tbody>
+      <tr><td>Circle / ellipse</td><td>$\pi/4 \approx 0.785$ (scale- and aspect-invariant)</td></tr>
+      <tr><td>Rectangle / square</td><td>$1.0$</td></tr>
+    </tbody>
+  </table>
+  <p>Threshold <code>ROUND_FILL_RATIO_MAX = 0.89</code> sits midway with noise headroom.</p>
+
+  <h3>5.2 Aspect ratio</h3>
+  <div class="math-block">$$\text{aspect\_ratio} = \frac{\max(\text{side}_a, \text{side}_b)}{\min(\text{side}_a, \text{side}_b)}$$</div>
+  <table>
+    <thead><tr><th><code>shape_class</code></th><th>Condition</th><th><code>symmetry_period_deg</code></th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>elongated</code></td><td>aspect &gt; 1.2</td><td>180°</td><td>Elongated; 180° rotation equivalent</td></tr>
+      <tr><td><code>round</code></td><td>fill_ratio &lt; 0.89</td><td><code>None</code></td><td>Round; orientation largely arbitrary</td></tr>
+      <tr><td><code>square_like</code></td><td>otherwise</td><td>90°</td><td>Square-like; 90° rotation equivalent</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>6. Applying to the robot wrist (<code>pose_math.py</code>)</h2>
+
+  <h3>6.1 Symmetry fold <code>wrap_to_symmetry(yaw_deg, period_deg)</code></h3>
+  <p>Fold to the minimum-rotation equivalent in $(-T/2,\, T/2]$:</p>
+  <div class="math-block">$$r = \text{yaw} \bmod T$$</div>
+  <div class="math-block">$$r \leftarrow \begin{cases} r - T & \text{if } r > T/2 \\ r & \text{otherwise} \end{cases}$$</div>
+  <p>Example ($T = 180^\circ$): 91° → −89° (shorter than rotating +91°).</p>
+  <p><strong>Period must come from <code>symmetry_period_deg</code></strong> — never hard-code 90°.</p>
+
+  <h3>6.2 Quaternion composition <code>quat_down_with_yaw(yaw_deg)</code></h3>
+  <p>Base pose <code>TARGET_QUAT_WXYZ</code> points tool Z at world $-Z$ (downward).
+  Additional rotation $\psi$ about <strong>world Z</strong>:</p>
+  <div class="math-block">$$q_{\text{yaw}} = \left(\cos\frac{\psi}{2},\ 0,\ 0,\ \sin\frac{\psi}{2}\right) \quad \text{(wxyz order)}$$</div>
+  <div class="math-block">$$q_{\text{target}} = q_{\text{yaw}} \otimes q_{\text{base}}$$</div>
+  <p><strong>Left multiply</strong> (extrinsic / world frame) ensures:</p>
+  <ul>
+    <li>The approach axis (tool Z → world $-Z$) stays fixed under world-Z rotation;</li>
+    <li>Horizontal gripper heading rotates by exactly $\psi$ in world frame.</li>
+  </ul>
+
+  <hr>
+
+  <h2>7. End-to-end pipeline</h2>
+  <pre class="mermaid">
+flowchart TD
+    A[Depth cloud + segmentation mask] --> B[Plane filter top-face points]
+    B --> C[Project to XY]
+    C --> D[2D convex hull]
+    D --> E[Rotating calipers min-area rect]
+    E --> F[Short side → grip_yaw_deg]
+    E --> G[Shape class → symmetry_period_deg]
+    F --> H[wrap_to_symmetry]
+    G --> H
+    H --> I[quat_down_with_yaw]
+    I --> J[IK move to grasp pose]
+  </pre>
+  <p class="note"><strong>Timing constraint</strong>: apply yaw only after capture finishes and
+  <code>grip_yaw_deg</code> is measured — on the final grasp move. During capture the wrist must stay fixed;
+  otherwise camera rotation corrupts pixel-offset geometry.</p>
+
+  <hr>
+
+  <h2>8. Worked examples</h2>
+  <h3>8.1 80 mm × 30 mm rectangle, long side 10° from world X</h3>
+  <ol>
+    <li>Hull ≈ rectangle;</li>
+    <li>MABR long side at 10°, short side at 100°;</li>
+    <li><code>grip_yaw_deg ≈ 100°</code> (fingers close along 30 mm short side);</li>
+    <li><code>shape_class = elongated</code>, <code>symmetry_period_deg = 180</code>;</li>
+    <li>If current wrist yaw is 0°, <code>wrap_to_symmetry(100°, 180) = 100°</code> → rotate ~100° about Z.</li>
+  </ol>
+  <h3>8.2 50 mm square</h3>
+  <p>Equal sides; MABR short/long interchangeable; 90° yaw ambiguity.
+  <code>shape_class = square_like</code>, <code>symmetry_period_deg = 90</code>; fold to minimum rotation.</p>
+  <h3>8.3 Circle</h3>
+  <p>Min rectangle is a circumscribed square; orientation has no physical meaning.
+  <code>shape_class = round</code>, <code>symmetry_period_deg = None</code>; control does not force yaw alignment.</p>
+
+  <hr>
+
+  <h2>9. Output fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>grip_yaw_deg</code></td><td><strong>Primary</strong>: world yaw of finger-closing axis (mod 180°)</td></tr>
+      <tr><td><code>grip_width_mm</code></td><td>Grip opening width (rectangle short side)</td></tr>
+      <tr><td><code>object_length_mm</code></td><td>Size along long side</td></tr>
+      <tr><td><code>shape_class</code></td><td><code>elongated</code> / <code>round</code> / <code>square_like</code> / <code>unknown</code></td></tr>
+      <tr><td><code>symmetry_period_deg</code></td><td>Symmetry period (90, 180, or None)</td></tr>
+      <tr><td><code>fill_ratio</code></td><td>Hull area / rectangle area</td></tr>
+      <tr><td><code>rect_aspect_ratio</code></td><td>Long side / short side</td></tr>
+      <tr><td><code>yaw_deg_estimated</code></td><td><strong>Legacy only</strong>, mod 90°; do not use for non-squares</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>10. Math toolkit summary</h2>
+  <table>
+    <thead><tr><th>Tool</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>Plane equation + height band</td><td>3D → 2D top-face projection</td></tr>
+      <tr><td>2D cross product / convex hull</td><td>Denoise; keep outer boundary</td></tr>
+      <tr><td>MABR + rotating calipers</td><td>Exact major/minor axes (not PCA)</td></tr>
+      <tr><td>Short side = gripper closing axis</td><td>Parallel-jaw geometry</td></tr>
+      <tr><td>fill_ratio / aspect_ratio</td><td>Shape symmetry and yaw ambiguity</td></tr>
+      <tr><td>mod 180° / wrap_to_symmetry</td><td>Undirected axis; minimum rotation</td></tr>
+      <tr><td>Quaternion left-multiply (world Z)</td><td>Stay downward; rotate horizontal yaw only</td></tr>
+    </tbody>
+  </table>
+
+  <div class="summary-box">
+    <strong>In one sentence</strong>: fit a minimum-area rectangle to the top-face contour, take the
+    <strong>short-side direction</strong> as the gripper finger axis, then fold by object symmetry to
+    the <strong>smallest wrist rotation</strong> that achieves alignment.
+  </div>
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>

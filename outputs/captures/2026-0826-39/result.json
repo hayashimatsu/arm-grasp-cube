@@ -1,0 +1,209 @@
+{
+  "status": "fail",
+  "run_id": "2026-0826-39",
+  "failures": [
+    "loaded capture module is stale -- re-run demo_start.py"
+  ],
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "pixel": "px",
+    "note": "fields ending in _m are metres, _cm are centimetres, _px are pixels"
+  },
+  "accuracy_note": "Simulated RTX depth. No camera calibration performed. Numeric precision is unverified and must not be treated as a calibrated metrological result.",
+  "camera_world_xyz_m": [
+    -0.341185,
+    0.086756,
+    1.247752
+  ],
+  "arm_base_world_xyz_m": [
+    0.0,
+    -0.7,
+    0.3
+  ],
+  "target_pixel_px": [
+    552,
+    433
+  ],
+  "camera_to_target_distance_m": 0.745886,
+  "camera_to_target_distance_cm": 74.588577,
+  "target_camera_xyz_m": [
+    0.395344,
+    -0.328885,
+    0.540263
+  ],
+  "target_world_xyz_m": [
+    0.054103,
+    -0.203458,
+    0.68573
+  ],
+  "vector_camera_to_target_m": [
+    0.395288,
+    -0.290214,
+    -0.562022
+  ],
+  "vector_camera_to_target_norm_m": 0.745886,
+  "vector_armbase_to_target_m": [
+    0.054103,
+    0.496542,
+    0.38573
+  ],
+  "vector_armbase_to_target_norm_m": 0.631086,
+  "self_body_exclusion": {
+    "target_pixel_px": [
+      552,
+      433
+    ],
+    "self_body_excluded_px": 18287,
+    "self_body_max_m": 0.18,
+    "valid_px": 307200,
+    "remaining_px": 288913,
+    "nearest_remaining_depth_m": 0.540263,
+    "nearest_excluded_depth_m": 0.043191
+  },
+  "intrinsics": {
+    "fx": 317.04312,
+    "fy": 317.04312,
+    "cx": 320.0,
+    "cy": 240.0,
+    "source": "usd_camera_focal_length_and_aperture",
+    "raw": {
+      "focal_length": 1.93,
+      "horizontal_aperture": 3.896,
+      "horizontal_fov_rad": 1.580079
+    }
+  },
+  "images": {
+    "rgb_left_annotated": "rgb_left_annotated.png",
+    "rgb_color_annotated": "rgb_color_annotated.png",
+    "depth_left_annotated": "depth_left_annotated.png",
+    "region_overlay": "region_overlay.png"
+  },
+  "target_outside_color_fov": false,
+  "source_integrity": {
+    "loaded_sha256": "e8893dd3b066f26b9fcb799bbc6983db4ea8855b4075866a12b2d16837da8591",
+    "disk_sha256": "c1e815c168eaac31abf0f08b9fe448f3ca85452f7e1d726641bf1a53e659e3d6",
+    "stale": true
+  },
+  "target_identification": {
+    "method": "nearest_surface_beyond_self_body",
+    "note": "legacy T006 rule: nearest surface beyond self-body; kept for comparison"
+  },
+  "tabletop_objects": {
+    "method": "plane_fit_then_connected_regions_v1",
+    "plane": {
+      "normal": [
+        -0.001071,
+        0.000829,
+        0.999999
+      ],
+      "offset_m": 0.59592,
+      "inlier_fraction": 0.673144
+    },
+    "params": {
+      "self_body_max_m": 0.18,
+      "above_plane_min_m": 0.01,
+      "above_plane_max_m": 0.5,
+      "min_px": 80,
+      "depth_step_m": 0.02
+    },
+    "object_count": 2,
+    "objects": [
+      {
+        "id": 1,
+        "pixel_count": 9924,
+        "bbox_px": [
+          509,
+          196,
+          639,
+          433
+        ],
+        "height_above_plane_m": 0.05726,
+        "depth_median_m": 0.584025,
+        "representative_pixel_px": [
+          533,
+          304
+        ],
+        "surface_center_world_xyz_m": [
+          0.058467,
+          0.008642,
+          0.645776
+        ],
+        "surface_centroid_world_xyz_m": [
+          0.074374,
+          0.008162,
+          0.651863
+        ],
+        "centroid_to_surface_offset_m": 0.017039,
+        "surface_extent_world_m": {
+          "x": 0.264209,
+          "y": 0.410159,
+          "z": 0.079885
+        },
+        "touches_border": true,
+        "center_reliability": "truncated_by_image_border",
+        "camera_to_surface_center_distance_m": 0.726773,
+        "vector_camera_to_object_m": [
+          0.399652,
+          -0.078114,
+          -0.601976
+        ],
+        "vector_armbase_to_object_m": [
+          0.058467,
+          0.708642,
+          0.345776
+        ],
+        "green_hue_fraction": 0.0,
+        "green_hue_only_fraction": 0.571443
+      },
+      {
+        "id": 2,
+        "pixel_count": 724,
+        "bbox_px": [
+          313,
+          205,
+          348,
+          242
+        ],
+        "height_above_plane_m": 0.049816,
+        "depth_median_m": 0.606387,
+        "representative_pixel_px": [
+          330,
+          223
+        ],
+        "surface_center_world_xyz_m": [
+          -0.322143,
+          0.16165,
+          0.64526
+        ],
+        "surface_centroid_world_xyz_m": [
+          -0.321415,
+          0.160939,
+          0.644073
+        ],
+        "centroid_to_surface_offset_m": 0.001564,
+        "surface_extent_world_m": {
+          "x": 0.068712,
+          "y": 0.069274,
+          "z": 0.039448
+        },
+        "touches_border": false,
+        "center_reliability": "ok",
+        "camera_to_surface_center_distance_m": 0.607427,
+        "vector_camera_to_object_m": [
+          0.019043,
+          0.074894,
+          -0.602492
+        ],
+        "vector_armbase_to_object_m": [
+          -0.322143,
+          0.86165,
+          0.34526
+        ],
+        "green_hue_fraction": 0.0,
+        "green_hue_only_fraction": 0.0
+      }
+    ],
+    "note": "All tabletop objects above the fitted table plane, excluding the robot's own body and the table surface itself. No semantic identification performed. Coordinates are surface centres, not volumetric centres."
+  }
+}

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yaw 推定：数学的原理</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #555;
+      --border: #ddd;
+      --code-bg: #f0f0f0;
+      --accent: #2563eb;
+      --table-stripe: #f5f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      line-height: 1.7;
+      color: var(--fg);
+      background: var(--bg);
+      margin: 0;
+      padding: 2rem 1rem 4rem;
+    }
+    main {
+      max-width: 52rem;
+      margin: 0 auto;
+      background: #fff;
+      padding: 2.5rem 3rem;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    h1 { font-size: 1.85rem; border-bottom: 2px solid var(--border); padding-bottom: .5rem; }
+    h2 { font-size: 1.35rem; margin-top: 2.2rem; color: #111; }
+    h3 { font-size: 1.1rem; margin-top: 1.6rem; color: #222; }
+    p, li { font-size: 1rem; }
+    .lang-switch { margin-bottom: 1.5rem; font-size: .95rem; }
+    .lang-switch a { color: var(--accent); text-decoration: none; margin-right: .75rem; }
+    .lang-switch a:hover { text-decoration: underline; }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: .88em;
+      background: var(--code-bg);
+      padding: .15em .4em;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0 1.5rem;
+      font-size: .95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: .55rem .75rem;
+      text-align: left;
+    }
+    th { background: var(--table-stripe); font-weight: 600; }
+    tr:nth-child(even) td { background: #fcfcfc; }
+    .math-block {
+      overflow-x: auto;
+      margin: 1.2rem 0;
+      padding: .5rem 0;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    ul, ol { padding-left: 1.4rem; }
+    li { margin: .35rem 0; }
+    .mermaid { margin: 1.5rem 0; text-align: center; }
+    .summary-box {
+      background: #f0f4ff;
+      border-left: 4px solid var(--accent);
+      padding: 1rem 1.2rem;
+      margin: 1.5rem 0;
+      border-radius: 0 6px 6px 0;
+    }
+    .note { color: var(--muted); font-size: .92rem; }
+  </style>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']],
+        processEscapes: true
+      },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+</head>
+<body>
+<main>
+  <p class="lang-switch">
+    <a href="README-yaw-estimate.html">English</a>
+    <a href="README-yaw-estimate.zh.html">中文版</a>
+    <a href="README-yaw-estimate.ja.html">日本語版</a>
+  </p>
+
+  <h1>Yaw 推定：数学的原理</h1>
+
+  <p>本ドキュメントは <code>scripts/yaw_estimate.py</code> と <code>scripts/pose_math.py</code> が
+  純粋な幾何学から「目の前の物体を把持するために、手首を世界 Z 軸まわりに何度回転させればよいか」を
+  どのように導出するかを説明する。</p>
+
+  <h3>関連コード</h3>
+  <table>
+    <thead><tr><th>モジュール</th><th>役割</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/yaw_estimate.py</code></td><td>点群から上面輪郭・最小面積矩形・グリッパ軸方向を推定</td></tr>
+      <tr><td><code>scripts/pose_math.py</code></td><td>推定角度を最小回転量に畳み込み、下向き把持姿勢を合成</td></tr>
+      <tr><td><code>scripts/capture_d455.py</code></td><td><code>region_yaw_estimate()</code> を呼び出し、結果を <code>result.json</code> に書き込む</td></tr>
+      <tr><td><code>scripts/demo_api.py</code></td><td><code>grip_yaw_deg</code> を読み取り、<code>wrap_to_symmetry</code> → <code>quat_down_with_yaw</code> → IK</td></tr>
+    </tbody>
+  </table>
+  <p class="note">このページでは、デモで使用する公開された把持軸の幾何計算を説明する。</p>
+
+  <hr>
+
+  <h2>1. 数学的に何を解いているか</h2>
+  <p>平行二爪グリッパ（parallel-jaw gripper）は、<strong>直線軸</strong>に沿って開閉する。
+  安定した把持のために必要なのは：</p>
+  <ol>
+    <li>物体が<strong>水平な作業面</strong>上に投影したときの形状；</li>
+    <li><strong>指が閉じる方向</strong>——非円形物体では、通常は輪郭の<strong>短辺方向</strong>；</li>
+    <li>その方向に合わせるための、手首の<strong>世界 Z 軸まわりの回転角</strong>。</li>
+  </ol>
+  <p><code>yaw_estimate.py</code> が (1)(2) を、<code>pose_math.py</code> が (3) を担当する。</p>
+  <p><strong>読み取るフィールド</strong>：制御と受入判定では常に <code>grip_yaw_deg</code> を用いる。<code>yaw_deg_estimated</code> は使わない。
+  後者は mod 90° の後方互換用であり、非正方形物体では「長辺か短辺か」の情報を失う。</p>
+
+  <hr>
+
+  <h2>2. 3D 点群から 2D 輪郭へ</h2>
+
+  <h3>2.1 作業面によるフィルタリング</h3>
+  <p>作業面は平面方程式で表す：</p>
+  <div class="math-block">$$\mathbf{n} \cdot \mathbf{p} = d$$</div>
+  <p>$\mathbf{n}$ は法線ベクトル（<code>plane["normal"]</code>）、$d$ は <code>plane["offset_m"]</code>。
+  各点 $\mathbf{p}_i$ の符号付き高さ：</p>
+  <div class="math-block">$$h_i = \mathbf{n} \cdot \mathbf{p}_i - d$$</div>
+  <p>物体上面付近の高さの点のみを残す：</p>
+  <div class="math-block">$$|h_i - h_{\text{top}}| \le \text{band}$$</div>
+  <p>（<code>height_above_plane_m</code> が $h_{\text{top}}$、デフォルト <code>band_m = 0.005</code>。）</p>
+  <p>世界座標の $(x, y)$ を取り、水平面上の 2D 点集合 $P = \{p_i \in \mathbb{R}^2\}$ を得る。</p>
+  <p><strong>幾何学的意味</strong>：3D 物体を鳥瞰図の輪郭点に圧縮する。</p>
+
+  <h3>2.2 凸包（Convex Hull）</h3>
+  <p>点群にはノイズがあり、全点をそのまま当てはめると不安定である。
+  <strong>monotone chain</strong> アルゴリズム（<code>convex_hull_2d()</code>）で凸包 $H$ を計算する。</p>
+  <p>3 点 $o, a, b$ の向きは 2D 外積（符号付き面積の 2 倍）で判定：</p>
+  <div class="math-block">$$\text{cross}(o,a,b) = (a_x - o_x)(b_y - o_y) - (a_y - o_y)(b_x - o_x)$$</div>
+  <ul>
+    <li>$\text{cross} &gt; 0$：左折（CCW）、保持；</li>
+    <li>$\text{cross} \le 0$：右折または共線、中間点を除去。</li>
+  </ul>
+  <p>凸包は内部ノイズを除去し、<strong>外輪郭</strong>を残す。</p>
+
+  <hr>
+
+  <h2>3. 核心：最小面積外接矩形（Rotating Calipers）</h2>
+
+  <h3>3.1 なぜ PCA を使わないか</h3>
+  <p>正方形の共分散行列は<strong>等方的</strong>であり、主成分方向は<strong>ノイズ</strong>である。
+  ここでは<strong>最小面積外接矩形</strong>（MABR）を <code>rotating_calipers_min_rect()</code> で実装する。</p>
+
+  <h3>3.2 重要な定理</h3>
+  <p>凸多角形 $H$ に対する面積最小の外接矩形は、<strong>少なくとも 1 辺が凸包の辺と共線</strong>である。</p>
+  <p class="note">（直観：矩形の辺が hull に接していなければ、最も近い hull 辺に向かって回転させても面積は増えない。）</p>
+  <p>凸包の各辺について 1 回ずつ試せばよい——これが <strong>rotating calipers</strong>（回転キャリパー）である。</p>
+
+  <h3>3.3 各辺に対する計算</h3>
+  <p>凸包の第 $i$ 辺のベクトル $\mathbf{e} = p_{i+1} - p_i$、方向角：</p>
+  <div class="math-block">$$\theta = \operatorname{atan2}(e_y, e_x)$$</div>
+  <p>全頂点を回転行列 $R(-\theta)$ で変換：</p>
+  <div class="math-block">$$R(-\theta) = \begin{bmatrix} \cos\theta & \sin\theta \\ -\sin\theta & \cos\theta \end{bmatrix}$$</div>
+  <div class="math-block">$$\tilde{p}_k = R(-\theta)\, p_k$$</div>
+  <p>回転後の座標系で<strong>軸平行境界ボックス</strong>（AABB）を計算：</p>
+  <div class="math-block">$$\text{span}_x = \max_k \tilde{p}_{k,x} - \min_k \tilde{p}_{k,x}, \quad \text{span}_y = \max_k \tilde{p}_{k,y} - \min_k \tilde{p}_{k,y}$$</div>
+  <div class="math-block">$$A(\theta) = \text{span}_x \cdot \text{span}_y$$</div>
+  <p>全 hull 辺について $A(\theta)$ を最小化する $\theta^*$ を選ぶ。</p>
+
+  <hr>
+
+  <h2>4. 矩形から「グリッパ yaw」へ</h2>
+  <p>平行二爪グリッパは<strong>短辺</strong>に沿って閉じる：</p>
+  <ul>
+    <li>開口幅 = 短辺 → <code>grip_width_mm</code></li>
+    <li>物体長 = 長辺 → <code>object_length_mm</code></li>
+  </ul>
+  <div class="math-block">$$\text{side}_a \le \text{side}_b \text{ のとき}: \quad \phi_{\text{grip}} = \theta^*, \quad w = \text{side}_a, \quad L = \text{side}_b$$</div>
+  <div class="math-block">$$\text{それ以外}: \quad \phi_{\text{grip}} = \theta^* + \frac{\pi}{2}, \quad w = \text{side}_b, \quad L = \text{side}_a$$</div>
+  <div class="math-block">$$\text{grip\_yaw\_deg} = \deg(\phi_{\text{grip}}) \bmod 180^\circ$$</div>
+
+  <h3>なぜ mod 180° であり mod 90° ではないか</h3>
+  <p><strong>80 mm × 30 mm</strong> の長方形では、10° と 100° は mod 90 の値が同じになるが、
+  グリッパ軸は 90° ずれている。G009 以降、<code>grip_yaw_deg</code> が短辺方向を明示的に保持する。</p>
+
+  <hr>
+
+  <h2>5. 形状分類と対称性</h2>
+  <h3>5.1 充填率 fill_ratio</h3>
+  <div class="math-block">$$\text{fill\_ratio} = \frac{A_H}{A_R}$$</div>
+  <table>
+    <thead><tr><th>形状</th><th>理論 fill_ratio</th></tr></thead>
+    <tbody>
+      <tr><td>円／楕円</td><td>$\pi/4 \approx 0.785$</td></tr>
+      <tr><td>矩形／正方形</td><td>$1.0$</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5.2 縦横比 aspect_ratio</h3>
+  <div class="math-block">$$\text{aspect\_ratio} = \frac{\max(\text{side}_a, \text{side}_b)}{\min(\text{side}_a, \text{side}_b)}$$</div>
+  <table>
+    <thead><tr><th><code>shape_class</code></th><th>条件</th><th><code>symmetry_period_deg</code></th><th>意味</th></tr></thead>
+    <tbody>
+      <tr><td><code>elongated</code></td><td>aspect &gt; 1.2</td><td>180°</td><td>細長形；180° 回転で等価</td></tr>
+      <tr><td><code>round</code></td><td>fill_ratio &lt; 0.89</td><td><code>None</code></td><td>円形；向きはほぼ任意</td></tr>
+      <tr><td><code>square_like</code></td><td>その他</td><td>90°</td><td>正方形類；90° 回転で等価</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>6. ロボット手首への適用（<code>pose_math.py</code>）</h2>
+  <h3>6.1 対称畳み込み <code>wrap_to_symmetry(yaw_deg, period_deg)</code></h3>
+  <div class="math-block">$$r = \text{yaw} \bmod T$$</div>
+  <div class="math-block">$$r \leftarrow \begin{cases} r - T & \text{if } r > T/2 \\ r & \text{otherwise} \end{cases}$$</div>
+  <p>例（$T = 180^\circ$）：91° → −89°。</p>
+
+  <h3>6.2 クォータニオン合成 <code>quat_down_with_yaw(yaw_deg)</code></h3>
+  <div class="math-block">$$q_{\text{yaw}} = \left(\cos\frac{\psi}{2},\ 0,\ 0,\ \sin\frac{\psi}{2}\right) \quad \text{（wxyz 順）}$$</div>
+  <div class="math-block">$$q_{\text{target}} = q_{\text{yaw}} \otimes q_{\text{base}}$$</div>
+  <p><strong>左乗</strong>（外旋・世界座標系）により、下向きアプローチ軸を維持しつつ水平 yaw のみ変更する。</p>
+
+  <hr>
+
+  <h2>7. 全体フロー</h2>
+  <pre class="mermaid">
+flowchart TD
+    A[深度点群 + セグメンテーション mask] --> B[平面フィルタで上面点を抽出]
+    B --> C[XY 平面へ投影]
+    C --> D[2D 凸包]
+    D --> E[Rotating Calipers 最小面積矩形]
+    E --> F[短辺方向 → grip_yaw_deg]
+    E --> G[形状分類 → symmetry_period_deg]
+    F --> H[wrap_to_symmetry で最小角に畳み込み]
+    G --> H
+    H --> I[quat_down_with_yaw で手首姿勢を合成]
+    I --> J[IK で把持点へ移動]
+  </pre>
+  <p class="note"><strong>タイミング制約</strong>：yaw は capture 完了後、最終 grasp 移動時のみ適用する。</p>
+
+  <hr>
+
+  <h2>8. 計算例</h2>
+  <h3>8.1 80 mm × 30 mm 長方形</h3>
+  <ol>
+    <li>凸包 ≈ 長方形；MABR 長辺 10°、短辺 100°；</li>
+    <li><code>grip_yaw_deg ≈ 100°</code>；<code>shape_class = elongated</code>；</li>
+    <li><code>wrap_to_symmetry(100°, 180) = 100°</code> → Z 軸まわり約 100° 回転。</li>
+  </ol>
+  <h3>8.2 50 mm 正方形</h3>
+  <p><code>shape_class = square_like</code>、<code>symmetry_period_deg = 90</code>。</p>
+  <h3>8.3 円形</h3>
+  <p><code>shape_class = round</code>、<code>symmetry_period_deg = None</code>。</p>
+
+  <hr>
+
+  <h2>9. 出力フィールド早見表</h2>
+  <table>
+    <thead><tr><th>フィールド</th><th>意味</th></tr></thead>
+    <tbody>
+      <tr><td><code>grip_yaw_deg</code></td><td><strong>主要</strong>：指開閉軸の世界 yaw（mod 180°）</td></tr>
+      <tr><td><code>grip_width_mm</code></td><td>把持開口幅（矩形の短辺）</td></tr>
+      <tr><td><code>object_length_mm</code></td><td>長辺方向のサイズ</td></tr>
+      <tr><td><code>shape_class</code></td><td><code>elongated</code> / <code>round</code> / <code>square_like</code> / <code>unknown</code></td></tr>
+      <tr><td><code>symmetry_period_deg</code></td><td>対称周期（90、180、または None）</td></tr>
+      <tr><td><code>yaw_deg_estimated</code></td><td><strong>後方互換のみ</strong>；非正方形では使用禁止</td></tr>
+    </tbody>
+  </table>
+
+  <div class="summary-box">
+    <strong>一言で</strong>：上面輪郭を最小面積矩形で囲み、矩形の<strong>短辺方向</strong>をグリッパ指軸とし、
+    物体の対称性に従って手首が回すべき<strong>最小角度</strong>に畳み込む。
+  </div>
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>

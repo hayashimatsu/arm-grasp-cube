@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yaw 估計：數學原理說明</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #555;
+      --border: #ddd;
+      --code-bg: #f0f0f0;
+      --accent: #2563eb;
+      --table-stripe: #f5f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      line-height: 1.7;
+      color: var(--fg);
+      background: var(--bg);
+      margin: 0;
+      padding: 2rem 1rem 4rem;
+    }
+    main {
+      max-width: 52rem;
+      margin: 0 auto;
+      background: #fff;
+      padding: 2.5rem 3rem;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    h1 { font-size: 1.85rem; border-bottom: 2px solid var(--border); padding-bottom: .5rem; }
+    h2 { font-size: 1.35rem; margin-top: 2.2rem; color: #111; }
+    h3 { font-size: 1.1rem; margin-top: 1.6rem; color: #222; }
+    p, li { font-size: 1rem; }
+    .lang-switch { margin-bottom: 1.5rem; font-size: .95rem; }
+    .lang-switch a { color: var(--accent); text-decoration: none; }
+    .lang-switch a:hover { text-decoration: underline; }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: .88em;
+      background: var(--code-bg);
+      padding: .15em .4em;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0 1.5rem;
+      font-size: .95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: .55rem .75rem;
+      text-align: left;
+    }
+    th { background: var(--table-stripe); font-weight: 600; }
+    tr:nth-child(even) td { background: #fcfcfc; }
+    .math-block {
+      overflow-x: auto;
+      margin: 1.2rem 0;
+      padding: .5rem 0;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    ul, ol { padding-left: 1.4rem; }
+    li { margin: .35rem 0; }
+    .mermaid { margin: 1.5rem 0; text-align: center; }
+    .summary-box {
+      background: #f0f4ff;
+      border-left: 4px solid var(--accent);
+      padding: 1rem 1.2rem;
+      margin: 1.5rem 0;
+      border-radius: 0 6px 6px 0;
+    }
+    .note { color: var(--muted); font-size: .92rem; }
+  </style>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']],
+        processEscapes: true
+      },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+</head>
+<body>
+<main>
+  <p class="lang-switch">
+    <a href="README-yaw-estimate.html">English</a>
+    <a href="README-yaw-estimate.zh.html">中文版</a>
+    <a href="README-yaw-estimate.ja.html">日本語版</a>
+  </p>
+
+  <h1>Yaw 估計：數學原理說明</h1>
+
+  <p>本文件說明 <code>scripts/yaw_estimate.py</code> 與 <code>scripts/pose_math.py</code>
+  如何用純幾何推導「面對眼前的物體，手腕要繞世界 Z 軸轉幾度才能夾起來」。</p>
+
+  <h3>相關程式碼</h3>
+  <table>
+    <thead><tr><th>模組</th><th>職責</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/yaw_estimate.py</code></td><td>從點雲估計物體頂面輪廓、最小面積矩形、夾爪軸方向</td></tr>
+      <tr><td><code>scripts/pose_math.py</code></td><td>把估計角度折疊成最小旋轉量，合成朝下抓取姿態</td></tr>
+      <tr><td><code>scripts/capture_d455.py</code></td><td>呼叫 <code>region_yaw_estimate()</code>，結果寫入 <code>result.json</code></td></tr>
+      <tr><td><code>scripts/demo_api.py</code></td><td>讀 <code>grip_yaw_deg</code>，經 <code>wrap_to_symmetry</code> → <code>quat_down_with_yaw</code> 交給 IK</td></tr>
+    </tbody>
+  </table>
+  <p class="note">本頁說明 demo 使用的公開抓取軸幾何計算。</p>
+
+  <hr>
+
+  <h2>1. 問題在數學上是什麼？</h2>
+  <p>平行夾爪（parallel-jaw gripper）開合時，兩指沿一條<strong>直線軸</strong>靠近或離開。要穩定夾取，需要：</p>
+  <ol>
+    <li>知道物體在<strong>水平桌面</strong>上的投影長什麼形狀；</li>
+    <li>找出<strong>手指應該沿哪個方向合攏</strong>——對非圓形物體，通常是輪廓的<strong>短邊方向</strong>；</li>
+    <li>把這個方向轉成機器人手腕繞<strong>世界 Z 軸</strong>要轉的角度。</li>
+  </ol>
+  <p><code>yaw_estimate.py</code> 負責 (1)(2)；<code>pose_math.py</code> 負責 (3)。</p>
+  <p><strong>判讀欄位</strong>：控制與驗收一律看 <code>grip_yaw_deg</code>，不要看 <code>yaw_deg_estimated</code>。
+  後者只做 mod 90° 的向後相容，對非正方形物體會丟失「長邊還是短邊」的資訊。</p>
+
+  <hr>
+
+  <h2>2. 從 3D 點雲到 2D 輪廓</h2>
+
+  <h3>2.1 桌面平面過濾</h3>
+  <p>桌面用平面方程表示：</p>
+  <div class="math-block">$$\mathbf{n} \cdot \mathbf{p} = d$$</div>
+  <p>其中 $\mathbf{n}$ 是法向量（<code>plane["normal"]</code>），$d$ 是 <code>plane["offset_m"]</code>。
+  對每個點 $\mathbf{p}_i$ 計算有符號高度：</p>
+  <div class="math-block">$$h_i = \mathbf{n} \cdot \mathbf{p}_i - d$$</div>
+  <p>只保留接近物體頂面高度的點：</p>
+  <div class="math-block">$$|h_i - h_{\text{top}}| \le \text{band}$$</div>
+  <p>（<code>height_above_plane_m</code> 為 $h_{\text{top}}$，預設 <code>band_m = 0.005</code>。）</p>
+  <p>再取世界座標的前兩維 $(x, y)$，得到頂面在水平面上的 2D 點集
+  $P = \{p_i \in \mathbb{R}^2\}$。</p>
+  <p><strong>幾何意義</strong>：把立體物體壓成鳥瞰圖上的輪廓點。</p>
+
+  <h3>2.2 凸包（Convex Hull）</h3>
+  <p>點雲有雜訊，直接用全部點擬合不穩。程式用 <strong>monotone chain</strong> 演算法
+  （<code>convex_hull_2d()</code>）計算凸包 $H$：包含所有點的最小凸多邊形。</p>
+  <p>判斷三點 $o, a, b$ 的轉向用的是 2D 叉積（有向面積的 2 倍）：</p>
+  <div class="math-block">$$\text{cross}(o,a,b) = (a_x - o_x)(b_y - o_y) - (a_y - o_y)(b_x - o_x)$$</div>
+  <ul>
+    <li>$\text{cross} &gt; 0$：左轉（CCW），保留；</li>
+    <li>$\text{cross} \le 0$：右轉或共線，移除中間點。</li>
+  </ul>
+  <p>凸包去掉內部雜點，保留<strong>外輪廓</strong>。</p>
+
+  <hr>
+
+  <h2>3. 核心：最小面積外接矩形（Rotating Calipers）</h2>
+
+  <h3>3.1 為什麼不用 PCA？</h3>
+  <p>正方形的協方差矩陣是<strong>各向同性</strong>的，主成分方向是<strong>雜訊</strong>，不是物體真實朝向。
+  因此這裡用<strong>最小面積外接矩形</strong>（Minimum Area Bounding Rectangle, MABR），
+  由 <code>rotating_calipers_min_rect()</code> 實作。</p>
+
+  <h3>3.2 關鍵定理</h3>
+  <p>對凸多邊形 $H$，面積最小的外接矩形，<strong>至少有一條邊與凸包的某一條邊共線</strong>。</p>
+  <p class="note">（證明直覺：若矩形沒有任何邊貼齊 hull，可以朝最近的 hull 邊旋轉而不增大面積。）</p>
+  <p>因此不必搜尋連續角度空間，只要對凸包每條邊試一次即可——這就是 <strong>rotating calipers</strong>。</p>
+
+  <h3>3.3 對每條邊的計算</h3>
+  <p>設凸包第 $i$ 條邊向量為 $\mathbf{e} = p_{i+1} - p_i$，方向角：</p>
+  <div class="math-block">$$\theta = \operatorname{atan2}(e_y, e_x)$$</div>
+  <p>把凸包所有頂點用旋轉矩陣 $R(-\theta)$ 轉到「這條邊與 x 軸平行」的座標系：</p>
+  <div class="math-block">$$R(-\theta) = \begin{bmatrix} \cos\theta & \sin\theta \\ -\sin\theta & \cos\theta \end{bmatrix}$$</div>
+  <div class="math-block">$$\tilde{p}_k = R(-\theta)\, p_k$$</div>
+  <p>在旋轉後座標系計算<strong>軸對齊包圍盒</strong>（AABB）：</p>
+  <div class="math-block">$$\text{span}_x = \max_k \tilde{p}_{k,x} - \min_k \tilde{p}_{k,x}, \quad \text{span}_y = \max_k \tilde{p}_{k,y} - \min_k \tilde{p}_{k,y}$$</div>
+  <div class="math-block">$$A(\theta) = \text{span}_x \cdot \text{span}_y$$</div>
+  <p>對所有 hull 邊取使 $A(\theta)$ 最小的 $\theta^*$，回傳：</p>
+  <ul>
+    <li><code>angle_rad</code> = $\theta^*$</li>
+    <li><code>side_a_m</code>：沿 $\theta^*$ 方向的邊長</li>
+    <li><code>side_b_m</code>：垂直方向的邊長</li>
+  </ul>
+
+  <hr>
+
+  <h2>4. 從矩形到「夾爪 yaw」</h2>
+  <p>平行夾爪應沿<strong>短邊</strong>合攏：</p>
+  <ul>
+    <li>開口寬度 = 短邊 → <code>grip_width_mm</code></li>
+    <li>物體長度 = 長邊 → <code>object_length_mm</code></li>
+  </ul>
+  <div class="math-block">$$\text{若 } \text{side}_a \le \text{side}_b: \quad \phi_{\text{grip}} = \theta^*, \quad w = \text{side}_a, \quad L = \text{side}_b$$</div>
+  <div class="math-block">$$\text{否則}: \quad \phi_{\text{grip}} = \theta^* + \frac{\pi}{2}, \quad w = \text{side}_b, \quad L = \text{side}_a$$</div>
+  <p>輸出角度（軸無方向性，mod 180°）：</p>
+  <div class="math-block">$$\text{grip\_yaw\_deg} = \deg(\phi_{\text{grip}}) \bmod 180^\circ$$</div>
+
+  <h3>為什麼 mod 180° 而不是 mod 90°？</h3>
+  <p>舊欄位 <code>yaw_deg_estimated = deg(θ*) mod 90°</code> 假設長短邊可互換。
+  對 <strong>80 mm × 30 mm</strong> 長方形，轉 10° 與 100° 的 mod 90 值相同，
+  但夾爪軸其實相差 90°（一個沿短邊、一個沿長邊）。G009 起以 <code>grip_yaw_deg</code> 明確保留短邊方向。</p>
+
+  <hr>
+
+  <h2>5. 形狀分類與對稱性</h2>
+  <p>同一個幾何軸可能有多個等價朝向。分類決定後續 <code>wrap_to_symmetry()</code> 用的週期 $T$。</p>
+
+  <h3>5.1 填充率 fill_ratio</h3>
+  <p>用 shoelace 公式（<code>_polygon_area()</code>）算凸包面積 $A_H$，
+  矩形面積 $A_R = \text{side}_a \cdot \text{side}_b$：</p>
+  <div class="math-block">$$\text{fill\_ratio} = \frac{A_H}{A_R}$$</div>
+  <table>
+    <thead><tr><th>形狀</th><th>理論 fill_ratio</th></tr></thead>
+    <tbody>
+      <tr><td>圓／橢圓</td><td>$\pi/4 \approx 0.785$（與尺度、長寬比無關）</td></tr>
+      <tr><td>矩形／正方形</td><td>$1.0$</td></tr>
+    </tbody>
+  </table>
+  <p>閾值 <code>ROUND_FILL_RATIO_MAX = 0.89</code> 介於兩者中點，留雜訊餘裕。</p>
+
+  <h3>5.2 長寬比 aspect_ratio</h3>
+  <div class="math-block">$$\text{aspect\_ratio} = \frac{\max(\text{side}_a, \text{side}_b)}{\min(\text{side}_a, \text{side}_b)}$$</div>
+  <table>
+    <thead><tr><th><code>shape_class</code></th><th>條件</th><th><code>symmetry_period_deg</code></th><th>意義</th></tr></thead>
+    <tbody>
+      <tr><td><code>elongated</code></td><td>aspect &gt; 1.2</td><td>180°</td><td>長條形，轉 180° 等價</td></tr>
+      <tr><td><code>round</code></td><td>fill_ratio &lt; 0.89</td><td><code>None</code></td><td>圓形，朝向幾乎任意</td></tr>
+      <tr><td><code>square_like</code></td><td>其餘</td><td>90°</td><td>正方形類，轉 90° 等價</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>6. 接到機器人手腕（<code>pose_math.py</code>）</h2>
+
+  <h3>6.1 對稱折疊 <code>wrap_to_symmetry(yaw_deg, period_deg)</code></h3>
+  <p>把角度折到最小旋轉量的等價代表角，區間 $(-T/2,\, T/2]$：</p>
+  <div class="math-block">$$r = \text{yaw} \bmod T$$</div>
+  <div class="math-block">$$r \leftarrow \begin{cases} r - T & \text{若 } r > T/2 \\ r & \text{否則} \end{cases}$$</div>
+  <p>範例（$T = 180^\circ$）：91° → −89°（比實際轉 91° 更短）。</p>
+  <p><strong>週期必須從 <code>symmetry_period_deg</code> 讀入</strong>，不可寫死 90°。</p>
+
+  <h3>6.2 四元數合成 <code>quat_down_with_yaw(yaw_deg)</code></h3>
+  <p>基準姿態 <code>TARGET_QUAT_WXYZ</code> 使工具 Z 軸指向世界 $-Z$（朝下）。
+  再繞<strong>世界 Z 軸</strong>轉 $\psi$ 度：</p>
+  <div class="math-block">$$q_{\text{yaw}} = \left(\cos\frac{\psi}{2},\ 0,\ 0,\ \sin\frac{\psi}{2}\right) \quad \text{（wxyz 順序）}$$</div>
+  <div class="math-block">$$q_{\text{target}} = q_{\text{yaw}} \otimes q_{\text{base}}$$</div>
+  <p><strong>左乘</strong>（外旋、世界座標系）的用意：</p>
+  <ul>
+    <li>已朝下的接近軸（工具 Z → 世界 $-Z$）在繞世界 Z 旋轉下<strong>不變</strong>；</li>
+    <li>水平面上的夾爪朝向旋轉恰好 $\psi$ 度。</li>
+  </ul>
+
+  <hr>
+
+  <h2>7. 整體流程</h2>
+  <pre class="mermaid">
+flowchart TD
+    A[深度點雲 + 分割 mask] --> B[平面過濾頂面點]
+    B --> C[投影到 XY 平面]
+    C --> D[2D 凸包]
+    D --> E[Rotating Calipers 最小面積矩形]
+    E --> F[取短邊方向 → grip_yaw_deg]
+    E --> G[形狀分類 → symmetry_period_deg]
+    F --> H[wrap_to_symmetry 折到最小角]
+    G --> H
+    H --> I[quat_down_with_yaw 合成手腕姿態]
+    I --> J[IK 移動到抓取點]
+  </pre>
+  <p class="note"><strong>時序限制</strong>：yaw 只能在 capture 完成、量測出 <code>grip_yaw_deg</code> 之後，
+  於最終 grasp 移動時套用；capture 期間手腕必須固定，否則相機朝向改變會污染像素偏移幾何。</p>
+
+  <hr>
+
+  <h2>8. 直覺範例</h2>
+  <h3>8.1 80 mm × 30 mm 長方形，長邊與世界 X 軸差 10°</h3>
+  <ol>
+    <li>凸包 ≈ 長方形；</li>
+    <li>MABR 長邊沿 10°，短邊沿 100°；</li>
+    <li><code>grip_yaw_deg ≈ 100°</code>（手指沿 30 mm 短邊合攏）；</li>
+    <li><code>shape_class = elongated</code>，<code>symmetry_period_deg = 180</code>；</li>
+    <li>若目前手腕 yaw 為 0°，<code>wrap_to_symmetry(100°, 180) = 100°</code>，需繞 Z 轉約 100°。</li>
+  </ol>
+  <h3>8.2 50 mm 正方形</h3>
+  <p>長短邊相等，MABR 的兩組邊可互換；yaw 有 90° 模糊。
+  <code>shape_class = square_like</code>，<code>symmetry_period_deg = 90</code>，折疊後取最小旋轉即可。</p>
+  <h3>8.3 圓形</h3>
+  <p>最小矩形為外接正方形，朝向無物理意義。
+  <code>shape_class = round</code>，<code>symmetry_period_deg = None</code>，控制端不強制對齊 yaw。</p>
+
+  <hr>
+
+  <h2>9. 輸出欄位速查</h2>
+  <table>
+    <thead><tr><th>欄位</th><th>意義</th></tr></thead>
+    <tbody>
+      <tr><td><code>grip_yaw_deg</code></td><td><strong>主要欄位</strong>：夾爪手指開合軸的世界 yaw（mod 180°）</td></tr>
+      <tr><td><code>grip_width_mm</code></td><td>夾取開口寬度（矩形短邊）</td></tr>
+      <tr><td><code>object_length_mm</code></td><td>物體沿長邊的尺寸</td></tr>
+      <tr><td><code>shape_class</code></td><td><code>elongated</code> / <code>round</code> / <code>square_like</code> / <code>unknown</code></td></tr>
+      <tr><td><code>symmetry_period_deg</code></td><td>對稱週期（90、180 或 None）</td></tr>
+      <tr><td><code>fill_ratio</code></td><td>凸包面積 / 矩形面積</td></tr>
+      <tr><td><code>rect_aspect_ratio</code></td><td>長邊 / 短邊</td></tr>
+      <tr><td><code>yaw_deg_estimated</code></td><td><strong>僅向後相容</strong>，mod 90°，非正方形勿用</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>10. 數學工具一覽</h2>
+  <table>
+    <thead><tr><th>數學工具</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>平面方程 + 高度帶</td><td>3D → 2D 頂面投影</td></tr>
+      <tr><td>2D 叉積 / 凸包</td><td>去雜訊、保留外輪廓</td></tr>
+      <tr><td>最小面積外接矩形 + rotating calipers</td><td>找物體主軸與次軸（精確，非 PCA 近似）</td></tr>
+      <tr><td>短邊 = 夾爪開合軸</td><td>平行夾爪幾何約束</td></tr>
+      <tr><td>fill_ratio / aspect_ratio</td><td>形狀對稱與 yaw 模糊度</td></tr>
+      <tr><td>mod 180° / wrap_to_symmetry</td><td>軸無方向性、取最小旋轉</td></tr>
+      <tr><td>四元數左乘（世界 Z）</td><td>保持朝下，只改水平 yaw</td></tr>
+    </tbody>
+  </table>
+
+  <div class="summary-box">
+    <strong>一句話</strong>：用最小面積矩形包住物體頂面輪廓，把矩形<strong>短邊方向</strong>當成夾爪手指軸，
+    再依物體對稱性折成手腕該轉的<strong>最小角度</strong>。
+  </div>
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+</body>
+</html>

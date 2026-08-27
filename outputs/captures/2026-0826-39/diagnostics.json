@@ -1,0 +1,109 @@
+{
+  "green_audit": {
+    "left": {
+      "total_px": 0,
+      "center_px": 0,
+      "bbox_px": null,
+      "centroid_px": null
+    },
+    "right": {
+      "total_px": 0,
+      "center_px": 0,
+      "bbox_px": null,
+      "centroid_px": null
+    },
+    "color": {
+      "total_px": 0,
+      "center_px": 0,
+      "bbox_px": null,
+      "centroid_px": null
+    }
+  },
+  "render": {
+    "setup": {
+      "status": "already_setup",
+      "stage_id": 9223002
+    },
+    "step": {
+      "method": "orchestrator_step_async",
+      "exception": null
+    }
+  },
+  "camera_frames": {
+    "left": {
+      "position_m": [
+        -0.341185,
+        0.086756,
+        1.247752
+      ],
+      "right": [
+        1.0,
+        5.2e-05,
+        -0.000126
+      ],
+      "up": [
+        -4.3e-05,
+        0.997544,
+        0.070044
+      ],
+      "forward": [
+        -0.000129,
+        0.070044,
+        -0.997544
+      ]
+    },
+    "right": {
+      "position_m": [
+        -0.246186,
+        0.087116,
+        1.242686
+      ],
+      "right": [
+        1.0,
+        5.2e-05,
+        -0.000126
+      ],
+      "up": [
+        -4.3e-05,
+        0.997544,
+        0.070044
+      ],
+      "forward": [
+        -0.000129,
+        0.070044,
+        -0.997544
+      ]
+    },
+    "color": {
+      "position_m": [
+        -0.282186,
+        0.087114,
+        1.242691
+      ],
+      "right": [
+        1.0,
+        5.2e-05,
+        -0.000126
+      ],
+      "up": [
+        -4.3e-05,
+        0.997544,
+        0.070044
+      ],
+      "forward": [
+        -0.000129,
+        0.070044,
+        -0.997544
+      ]
+    }
+  },
+  "stage_sha256_before": "7e265f594e3bc522b2a0add593755920ebb20ee5a4bb0d597914782ddfcf5785",
+  "stage_sha256_after": "7e265f594e3bc522b2a0add593755920ebb20ee5a4bb0d597914782ddfcf5785",
+  "timeline_playing_before": true,
+  "ik_target_hidden": true,
+  "stereo_baseline_m": 0.095135,
+  "settle": {
+    "settled": true,
+    "reason": "IK controller is not running"
+  }
+}
