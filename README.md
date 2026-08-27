@@ -171,6 +171,7 @@ signal.
 > calipers theorem, the fill-ratio shape test, symmetry folding, and worked
 > examples — is in [`docs/README-yaw-estimate.html`](docs/README-yaw-estimate.html)
 > ([中文版](docs/README-yaw-estimate.zh.html) · [日本語版](docs/README-yaw-estimate.ja.html)).
+> Please download it if necessary. It should only be viewed in a web browser.
 
 ### 3.3 Moving the arm
 
@@ -306,29 +307,24 @@ and are not present in a fresh clone. Open the directory directly. Set
 
 ## 7. Scope and limits
 
-**Supported.** A red 50 mm cube anywhere on the table that the left camera can
+**Supported.** 
+
+A red 50 mm cube anywhere on the table that the left camera can
 see, at any rotation about the vertical axis. The gripper aligns itself to the
 cube before closing.
 
-**Measured.** Eight blind trials, cube placed and rotated freely by the operator
-without telling the system anything:
+**Shape generality.** 
 
-| | |
-|---|---|
-| Identified | 8 / 8 |
-| Held | 8 / 8 |
-| Wrist rotation applied | 8 / 8 |
-| Worst grasp-axis error | 0.31° |
-| Worst position error | 3.83 mm |
-
-**Shape generality.** The grasp-axis algorithm is not specific to squares. It was
+The grasp-axis algorithm is not specific to squares. It was
 verified offline against synthetic squares, rectangles, circles, ellipses and an
 irregular polygon, at six rotations each — 36 cases, including an 80 × 30 mm
 rectangle where it correctly reports a grip width of 30 mm rather than 80 mm.
 **Only the 50 mm cube has been tested on the robot**, because it is the only
 object in the scene.
 
-**Not supported.** Selecting among several objects, deriving the finger angle from
+**Not supported.** 
+
+Selecting among several objects, deriving the finger angle from
 object width, placing the object down again, and objects of other sizes.
 
 **Operating notes.**
